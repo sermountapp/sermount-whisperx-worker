@@ -1,0 +1,7 @@
+.git
+tests
+samples
+__pycache__
+*.pyc
+test_input.json
+README.md
