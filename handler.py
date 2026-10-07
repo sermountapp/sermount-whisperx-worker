@@ -46,6 +46,10 @@ _wx_logger.addHandler(logging.NullHandler())
 _wx_logger.setLevel(logging.CRITICAL)
 _wx_logger.propagate = False
 
+# urllib3 (under requests) logs full request paths at DEBUG, and a signed
+# URL's path carries its token. Pinned at WARNING whatever the root level is.
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 log = logging.getLogger("aligner")
 if not log.handlers:
     _h = logging.StreamHandler()
