@@ -70,25 +70,43 @@ After the endpoint exists, create an API key scoped to this endpoint. It goes in
 Render **worker** service as `RUNPOD_API_KEY` (`sync: false`) together with
 `RUNPOD_ALIGN_ENDPOINT_ID`. Never into the web service, a file, or a chat.
 
-## Cutting a release (this is how a new version goes live)
+## Shipping a new version
 
-RunPod does not deploy on push. A **GitHub release** triggers a build.
+What starts a build, as far as it is known (2026-10-08):
+
+- **The first build** starts on its own once the endpoint is connected to the repo. RunPod's
+  docs say the image is built "automatically" on deploy; in practice the console showed "Push
+  a commit to main to start a build" while the repo was empty, and the build started on the
+  first push to `main`, before any release existed.
+- **Later updates:** RunPod's docs say pushes do *not* update the endpoint ("they won't
+  automatically be pushed to your endpoint... create a new release"), and that a new commit
+  plus a release becomes the active build and supersedes a rollback. The console wording
+  suggests a push to `main` builds. These disagree and the next change settles it: push the
+  commit, then look at the endpoint's **Builds** tab *before* publishing a release. If a
+  build started, a push deploys; if not, the release does. Record the answer here.
+- **What a release does for us either way:** it is the version label. Its tag matches
+  `IMAGE_TAG` in `handler.py`, which every response reports as `image_tag`, so the Owner
+  Console shows which worker version aligned each sermon.
+
+Steps:
 
 1. Bump `IMAGE_TAG` in `handler.py` to the new tag (for example `v0.1.1`) and commit to `main`.
-2. GitHub → Releases → Draft a new release → tag `v0.1.1` on `main` → Publish.
-3. RunPod console → the endpoint → Builds: wait for Building → Testing → Completed. Workers
+2. Push. Check Builds (see above).
+3. GitHub → Releases → Draft a new release → tag `v0.1.1` on `main` → Publish.
+4. RunPod console → the endpoint → Builds: wait for Building → Testing → Completed. Workers
    roll over to the new build on their own.
-4. Run the console test (below) and check `image_tag` in the output.
+5. Run the console test (below) and check `image_tag` in the output.
 
-**Live tag:** none yet (first release will be `v0.1.0`). Update this line on every release.
+**Live tag:** `v0.1.0` (release published 2026-10-08, `main` @ `6a05942`). Update this line
+on every release.
 
 ## Rolling back
 
 1. RunPod console → endpoint → Builds → the previous build's `⋯` menu → **Rollback**. The
-   endpoint stays there until the next release is published.
+   endpoint stays there until a newer build becomes active (see "Shipping a new version").
 2. If old workers keep serving, scale workers to 0 (or delete the running workers) so they
    restart on the rolled-back build.
-3. Fix forward with a new release; do not move or delete existing tags.
+3. Fix forward with a new version; do not move or delete existing tags.
 
 On the Sermount side the faster rollback is the app's `ALIGNMENT_ENABLED` flag on the
 Render worker: off means no requests reach this endpoint at all.
@@ -100,7 +118,16 @@ government work in the public domain) from deliberately rough word times. Paste 
 contents into the endpoint's **Requests** tab and run. Expect `aligned: true`, 22 words, and
 times that move by tens to hundreds of milliseconds.
 
-Result of the first console run: _pending (paste the output here after the first build)._
+Result of the first console run (2026-10-08, build of `main` @ `6a05942`, `v0.1.0`):
+
+```text
+status: COMPLETED   delayTime: 15705 ms (cold start)   workerId: [redacted]
+output: aligned: true, 22/22 words scored, image_tag: v0.1.0, exec_ms: 1305
+```
+
+First real sermon on staging (sermon 44, 2026-10-08): 2712 of 2734 word starts moved,
+median shift 17 ms, p95 391 ms, execution 9.4 s, queue delay 1.1 s. It ran on the
+24 GB PRO 6000 MIG tier because the 16 GB tier was low on supply.
 
 ## Local checks
 
