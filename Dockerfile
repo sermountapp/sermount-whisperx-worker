@@ -1,6 +1,6 @@
 # WhisperX forced-alignment worker for RunPod Serverless (built by RunPod from GitHub).
 # Every version is pinned: base image by digest, Python packages in requirements.txt.
-FROM --platform=linux/amd64 runpod/base:1.4.0-cuda1281-ubuntu2204@sha256:6a1a66d92c5a9946c2748415c923321ed816c26f5d331a2389f4646145611965
+FROM --platform=linux/amd64 runpod/base:1.4.1-cuda1281-ubuntu2204@sha256:c260aa63b109215a21c007a91ca79b17aa464f2f85c2b0ee5067e0eaa86150fb
 
 # RUNPOD_LOG_LEVEL: the SDK defaults to DEBUG, which logs every handler output.
 ENV PYTHONUNBUFFERED=1 \
