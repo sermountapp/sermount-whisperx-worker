@@ -26,7 +26,7 @@ import time
 
 import requests
 
-IMAGE_TAG = "v0.1.0"  # bump with every GitHub release; see README "Cutting a release"
+IMAGE_TAG = "v0.1.1"  # bump with every GitHub release; see README "Cutting a release"
 
 ALIGN_MODEL = "WAV2VEC2_ASR_BASE_960H"
 MODEL_DIR = os.environ.get("MODEL_DIR", "/models")

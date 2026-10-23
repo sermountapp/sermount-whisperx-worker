@@ -23,7 +23,7 @@ Output (the handler never raises; failures come back as `aligned: false`):
 ```json
 {"aligned": true, "reason": null,
  "words": [{"i": 0, "s": 0.29, "e": 0.47, "score": 0.91}],
- "model": "WAV2VEC2_ASR_BASE_960H", "image_tag": "v0.1.0", "exec_ms": 2140,
+ "model": "WAV2VEC2_ASR_BASE_960H", "image_tag": "v0.1.1", "exec_ms": 2140,
  "word_count": 1, "scored_count": 1, "segment_count": 1, "fallback_segments": 0,
  "audio_secs": 11.0}
 ```
