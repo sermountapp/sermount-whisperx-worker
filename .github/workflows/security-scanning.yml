@@ -35,7 +35,53 @@ jobs:
       - name: Audit Python dependencies
         # requirements.txt pins every package and the Dockerfile installs it --no-deps,
         # so the audit reads the pins as they are (no multi-GB torch download).
-        run: pip-audit -r requirements.txt --no-deps --desc
+        #
+        # transformers 4.57.6 is transitive (whisperx); its fixes are in 5.x, a major
+        # that is its own lane. Every ignored advisory's vector is loading an untrusted
+        # model, checkpoint, config or remote code. This worker aligns with the fixed
+        # torchaudio WAV2VEC2_ASR_BASE_960H bundle baked at build (ALIGN_MODEL,
+        # language_code="en"), runs with HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1,
+        # never loads a model or config named by a job, never trains, never saves:
+        #   PYSEC-2025-217  (CVE-2025-14929) X-CLIP checkpoint conversion deserialises an untrusted checkpoint
+        #   PYSEC-2026-2288 (CVE-2026-1839)  Trainer._load_rng_state torch.load of a checkpoint; training only, torch < 2.6
+        #   PYSEC-2026-2289 (CVE-2026-4372)  a malicious config.json in a Hub repo runs code at from_pretrained()
+        #   PYSEC-2026-2290 (CVE-2026-5241)  LightGlue config overrides trust_remote_code at model load
+        #   PYSEC-2026-3929 (CVE-2026-9856)  save_pretrained() path traversal from a crafted tokenizer_config.json
+        #   PYSEC-2026-4174 (CVE-2026-80047) load_custom_generate() writes remote code before the trust check
+        # Revisit with the transformers 5 lane, or at once if the worker ever loads a model chosen by a job.
+        #
+        # torch 2.8.0 is pinned to what whisperx 3.8.6 was resolved against; its fixes are
+        # in 2.9-2.13 (the torch 2.9+ lane). Same standard: model or checkpoint loading,
+        # or a crafted call into a local tensor API, never job input. The worker feeds
+        # torch decoded audio and the baked bundle's weights, nothing else:
+        #   PYSEC-2025-193 (CVE-2025-2999)  nn.utils.rnn.unpack_sequence memory corruption from crafted local calls
+        #   PYSEC-2025-194 (CVE-2025-3000)  torch.jit.script memory corruption from crafted local calls
+        #   PYSEC-2025-195 (CVE-2025-3001)  torch.lstm_cell memory corruption from crafted local calls
+        #   PYSEC-2025-203 (CVE-2025-55551) torch.linalg.lu slice DoS from crafted local calls
+        #   PYSEC-2025-204 (CVE-2025-55552) torch.rot90 with randn_like misbehaves; crafted local calls
+        #   PYSEC-2025-206 (CVE-2025-55554) torch.nan_to_num(...).long() integer overflow; crafted local calls
+        #   PYSEC-2026-139 (CVE-2026-4538)  pt2 loading handler deserialises a crafted file; no fix released
+        #   PYSEC-2026-2286 (CVE-2026-24747) weights_only unpickler memory corruption from a crafted .pth
+        # nltk 3.10.3 reads only the baked punkt_tab:
+        #   PYSEC-2026-3740 (CVE-2026-81726) pathsec bypass in model import/export when untrusted
+        #                    code chooses model paths; no fix released
+        run: |
+          pip-audit -r requirements.txt --no-deps --desc \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2026-2288 \
+            --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln PYSEC-2026-2290 \
+            --ignore-vuln PYSEC-2026-3929 \
+            --ignore-vuln PYSEC-2026-4174 \
+            --ignore-vuln PYSEC-2025-193 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2025-195 \
+            --ignore-vuln PYSEC-2025-203 \
+            --ignore-vuln PYSEC-2025-204 \
+            --ignore-vuln PYSEC-2025-206 \
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln PYSEC-2026-2286 \
+            --ignore-vuln PYSEC-2026-3740
 
   secret-scan:
     name: Secret Scan
