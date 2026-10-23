@@ -5,15 +5,18 @@
 # after the local checks in the README, as with any release.
 version: 2
 updates:
+  # Security updates only. requirements.txt is a lock of the torch stack that
+  # whisperx 3.8.6 resolves (installed --no-deps), so a version PR that moves one
+  # pin, or a group of them, cannot resolve on its own (ResolutionImpossible on
+  # the first week's eight PRs). A limit of 0 turns version PRs off; Dependabot
+  # security updates still open PRs for advisories. The transformers 5 and torch
+  # 2.9+ moves are deliberate lanes that re-resolve the whole lock (README "Pins").
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
-    groups:
-      python-minor-and-patch:
-        update-types: [minor, patch]
+    open-pull-requests-limit: 0
 
   # The digest-pinned runpod/base line in the Dockerfile gets a PR when the tag moves.
   - package-ecosystem: docker
