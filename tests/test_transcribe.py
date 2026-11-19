@@ -64,6 +64,12 @@ class FakeWhisperX(types.ModuleType):
                 continue
             words = [{"word": t, "start": seg["start"] + i * 0.5, "end": seg["start"] + i * 0.5 + 0.4,
                       "score": 0.875} for i, t in enumerate(tokens)]
+            if self.mode == "partial" and k == 1:
+                # whisperx's real partial case: a token with no character in the
+                # aligner's dictionary ("1961", a symbol) comes back untimed beside
+                # timed neighbours.
+                for i in (1, 3):
+                    words[i] = {"word": tokens[i], "start": None, "end": None, "score": None}
             out.append({"start": seg["start"], "end": seg["end"], "text": seg["text"], "words": words})
         return {"segments": out, "word_segments": [w for s in out for w in s["words"]]}
 
@@ -183,6 +189,19 @@ def test_whisperx_unaligned_segment_keeps_its_words(env):
     assert all(w["score"] is None for w in tail)
     assert tail[0]["start"] == 5.0 and tail[-1]["end"] == 9.0
     assert [s["text"] for s in out["segments"]][1] == "ask not what your country"
+
+
+def test_whisperx_partly_untimed_segment_loses_no_word(env):
+    """3 of 5 words timed in segment 2: all 5 survive, in order, and the whole
+    segment is spread evenly with score None (the WHC behaviour, see README)."""
+    env.fake.mode = "partial"
+    out = handler.handler(_job("whisperx"))
+    assert [w["w"] for w in out["words"]] == "And so my fellow Americans, ask not what your country".split()
+    assert out["word_count"] == 10 and out["words_synthesised"] == 5 and out["scored_count"] == 5
+    tail = out["words"][5:]
+    assert all(w["score"] is None for w in tail)
+    assert [w["start"] for w in tail] == [5.0, 5.8, 6.6, 7.4, 8.2] and tail[-1]["end"] == 9.0
+    assert all(w["score"] == 0.875 for w in out["words"][:5])
 
 
 def test_faster_whisper_engine_is_sequential_with_vad(env):

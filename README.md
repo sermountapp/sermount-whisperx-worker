@@ -100,8 +100,12 @@ between the two engines is the pipeline, not the model.
    fallback and no compression-ratio check** (whisperx accepts those options and does not
    apply them on this path), `condition_on_previous_text` false.
 4. wav2vec2 forced alignment (the same models as align mode) times every word; `score` is the
-   aligner's. A segment the aligner cannot time keeps its words with their times spread evenly
-   across the segment and `score: null`, counted in `words_synthesised`.
+   aligner's. **When ANY word in a segment comes back untimed** (no character in the aligner's
+   dictionary, e.g. "1961" or a symbol, or the whole segment fails), **every word in that
+   segment** keeps its text but gets evenly spread times across the segment and `score: null`,
+   counted in `words_synthesised` (ported from WHC). No word is dropped. For Part C: count
+   score-null words as present (they are not missing) but exclude them from every timing
+   statistic, and report `words_synthesised` beside the missing-word figure.
 
 Chunk size, batch size, onset and offset are whisperx's own defaults (batch 16 is WHC's
 production value; whisperx leaves it unset). `options` changes them per job. WHC's re-decode
