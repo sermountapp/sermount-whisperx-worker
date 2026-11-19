@@ -21,7 +21,7 @@ transcription bake-off. Two engines on the same baked faster-whisper large-v3
 weights, so a difference between them is the pipeline, not the model:
 
     {"mode": "transcribe", "audio_url": "https://...", "language": "en"|"es",
-     "engine": "whisperx"|"faster-whisper", "options": {...}}   # options: whisperx only
+     "engine": "whisperx"|"faster-whisper", "options": {...}}   # options: per engine, bounded
 
     whisperx       = BATCHED. Pyannote VAD cuts the audio into chunks of at most
                      `chunk_size` s, each chunk is decoded once (no temperature
@@ -53,7 +53,7 @@ import time
 
 import requests
 
-IMAGE_TAG = "v0.2.0"  # bump with every GitHub release; see README "Cutting a release"
+IMAGE_TAG = "v0.2.1"  # bump with every GitHub release; see README "Cutting a release"
 
 # The torchaudio bundles whisperx 3.8.6 maps each language to
 # (whisperx/alignment.py DEFAULT_ALIGN_MODELS_TORCH); both baked by download_models.py.
@@ -77,16 +77,27 @@ WHISPERX_DEFAULTS = {"batch_size": 16, "chunk_size": 30, "vad_onset": 0.500, "va
 WHISPERX_BOUNDS = {"batch_size": (int, 1, 32), "chunk_size": (int, 5, 30),
                    "vad_onset": (float, 0.05, 0.95), "vad_offset": (float, 0.05, 0.95)}
 
-# faster-whisper sequential path, fixed. beam_size 5 and every decoding option are
-# faster-whisper 1.2.1's WhisperModel.transcribe defaults (condition_on_previous_text
-# True, temperature fallback 0.0..1.0, compression_ratio_threshold 2.4). vad_filter
-# is OFF by default there and ON here; its VadOptions are the library defaults.
+# faster-whisper sequential path. beam_size 5, word timestamps and VAD are fixed;
+# every decoding option is faster-whisper 1.2.1's WhisperModel.transcribe default
+# (temperature fallback 0.0..1.0, log_prob_threshold -1.0). vad_filter is OFF by
+# default there and ON here; its VadOptions are the library defaults.
 FASTER_WHISPER_SETTINGS = {
     "beam_size": 5, "word_timestamps": True, "vad_filter": True,
-    "condition_on_previous_text": True,
     "vad": {"threshold": 0.5, "min_silence_duration_ms": 2000, "speech_pad_ms": 400,
             "max_speech_duration_s": None, "min_speech_duration_ms": 0},
 }
+# v0.2.1: three per-job knobs against the sequential decoder's loops (sermon 44,
+# 2026-11-19: "I want a car." x5). Defaults are the library's, so a job without
+# options decodes exactly as v0.2.0 did. hallucination_silence_threshold (seconds)
+# skips silent stretches longer than this when a segment looks hallucinated; it
+# needs word_timestamps, which this path always has.
+FASTER_WHISPER_DEFAULTS = {"condition_on_previous_text": True, "hallucination_silence_threshold": None,
+                           "compression_ratio_threshold": 2.4}
+FASTER_WHISPER_BOUNDS = {"condition_on_previous_text": (bool, None, None),
+                         "hallucination_silence_threshold": ("float_or_none", 0.5, 10.0),
+                         "compression_ratio_threshold": (float, 0.5, 5.0)}
+OPTION_SPECS = {"whisperx": (WHISPERX_DEFAULTS, WHISPERX_BOUNDS),
+                "faster-whisper": (FASTER_WHISPER_DEFAULTS, FASTER_WHISPER_BOUNDS)}
 SAMPLE_RATE = 16000
 
 MAX_SEGMENT_SECS = 30.0
@@ -429,22 +440,33 @@ def validate_transcribe_input(job_input):
     raw = job_input.get("options") or {}
     if not isinstance(raw, dict):
         raise TranscribeError("input")
-    if raw and engine != "whisperx":
-        raise TranscribeError("options")
-    options = dict(WHISPERX_DEFAULTS) if engine == "whisperx" else {}
+    defaults, bounds = OPTION_SPECS[engine]
+    options = dict(defaults)
     for key, value in raw.items():
-        if key not in WHISPERX_BOUNDS:
+        if key not in bounds:
             raise TranscribeError("options")
-        kind, lo, hi = WHISPERX_BOUNDS[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TranscribeError("options")
-        if kind is int and value != int(value):
-            raise TranscribeError("options")
-        value = kind(value)
-        if not (lo <= value <= hi) or not math.isfinite(value):
-            raise TranscribeError("options")
-        options[key] = value
+        options[key] = _bounded(value, *bounds[key])
     return audio_url, language.lower(), engine, options
+
+
+def _bounded(value, kind, lo, hi):
+    """One option value checked against its kind and bounds, or TranscribeError."""
+    if kind is bool:
+        if not isinstance(value, bool):
+            raise TranscribeError("options")
+        return value
+    if kind == "float_or_none":
+        if value is None:
+            return None
+        kind = float
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TranscribeError("options")
+    if kind is int and value != int(value):
+        raise TranscribeError("options")
+    value = kind(value)
+    if not math.isfinite(value) or not (lo <= value <= hi):
+        raise TranscribeError("options")
+    return value
 
 
 def _get_whisper():
@@ -553,14 +575,19 @@ def transcribe_whisperx(audio, language, options):
     return segments, words, settings, stats
 
 
-def transcribe_faster_whisper(audio, language):
+def transcribe_faster_whisper(audio, language, options=None):
     """Sequential: Silero VAD drops silence, then window-by-window decoding with
-    word timestamps from Whisper itself. No wav2vec2 pass."""
+    word timestamps from Whisper itself. No wav2vec2 pass. `options` are the
+    validated FASTER_WHISPER_DEFAULTS keys; every one is passed explicitly."""
+    options = dict(FASTER_WHISPER_DEFAULTS, **(options or {}))
     whisper, _device, compute_type = _get_whisper()
     t0 = time.monotonic()
     seg_iter, _info = whisper.transcribe(
         audio, language=language, beam_size=FASTER_WHISPER_SETTINGS["beam_size"],
         word_timestamps=True, vad_filter=True,
+        condition_on_previous_text=options["condition_on_previous_text"],
+        hallucination_silence_threshold=options["hallucination_silence_threshold"],
+        compression_ratio_threshold=options["compression_ratio_threshold"],
     )
     segments, words = [], []
     for seg in seg_iter:  # a generator: decoding happens here
@@ -576,7 +603,7 @@ def transcribe_faster_whisper(audio, language):
                           "score": None if _num(w.probability) is None else round(float(w.probability), 3)})
     transcribe_ms = int((time.monotonic() - t0) * 1000)
     settings = {"path": "sequential", "vad": "silero (faster_whisper/assets)",
-                **FASTER_WHISPER_SETTINGS, "compute_type": compute_type}
+                **FASTER_WHISPER_SETTINGS, **options, "compute_type": compute_type}
     stats = {"words_synthesised": 0, "transcribe_ms": transcribe_ms, "align_ms": 0}
     return segments, words, settings, stats
 
@@ -611,7 +638,7 @@ def run_transcribe(job_input):
         if engine == "whisperx":
             segments, words, settings, stats = transcribe_whisperx(audio, language, options)
         else:
-            segments, words, settings, stats = transcribe_faster_whisper(audio, language)
+            segments, words, settings, stats = transcribe_faster_whisper(audio, language, options)
 
         scored = sum(1 for w in words if w["score"] is not None)
         exec_ms = int((time.monotonic() - started) * 1000)

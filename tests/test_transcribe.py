@@ -208,13 +208,36 @@ def test_faster_whisper_engine_is_sequential_with_vad(env):
     out = handler.handler(_job("faster-whisper", language="es"))
     assert out["transcribed"] is True and out["engine"] == "faster-whisper"
     assert out["engine_id"] == f"faster-whisper/large-v3@{handler.IMAGE_TAG}"
-    assert env.whisper.calls == [{"language": "es", "beam_size": 5, "word_timestamps": True, "vad_filter": True}]
+    # No options: the library defaults, passed explicitly (v0.2.0 behaviour).
+    assert env.whisper.calls == [{"language": "es", "beam_size": 5, "word_timestamps": True, "vad_filter": True,
+                                  "condition_on_previous_text": True, "hallucination_silence_threshold": None,
+                                  "compression_ratio_threshold": 2.4}]
     assert env.fake.load_model_calls == [] and env.fake.align_calls == [] and env.loaded == []
     assert [s["text"] for s in out["segments"]] == ["And so, my fellow", "Americans."]  # blank segment dropped
     assert out["words"][1] == {"w": "so,", "start": 0.3, "end": 0.6, "score": 0.88}
     assert out["word_count"] == 5 == out["scored_count"]
     assert out["settings"]["path"] == "sequential" and out["settings"]["vad_filter"] is True
     assert out["settings"]["vad"]["min_silence_duration_ms"] == 2000
+    assert out["settings"]["condition_on_previous_text"] is True
+    assert out["settings"]["hallucination_silence_threshold"] is None
+    assert out["settings"]["compression_ratio_threshold"] == 2.4
+
+
+def test_faster_whisper_options_override_within_bounds(env):
+    out = handler.handler(_job("faster-whisper", options={"condition_on_previous_text": False,
+                                                          "hallucination_silence_threshold": 2,
+                                                          "compression_ratio_threshold": 1.8}))
+    assert out["transcribed"] is True
+    call = env.whisper.calls[0]
+    assert call["condition_on_previous_text"] is False
+    assert call["hallucination_silence_threshold"] == 2.0 and isinstance(call["hallucination_silence_threshold"], float)
+    assert call["compression_ratio_threshold"] == 1.8
+    st = out["settings"]
+    assert st["condition_on_previous_text"] is False and st["hallucination_silence_threshold"] == 2.0
+    assert st["compression_ratio_threshold"] == 1.8 and st["path"] == "sequential"
+    # An explicit null keeps the threshold off.
+    handler.handler(_job("faster-whisper", options={"hallucination_silence_threshold": None}))
+    assert env.whisper.calls[1]["hallucination_silence_threshold"] is None
 
 
 def test_spanish_whisperx_aligns_with_spanish_model(env):
@@ -238,6 +261,16 @@ def test_spanish_whisperx_aligns_with_spanish_model(env):
     ({"options": {"vad_onset": float("nan")}}, "options"),
     ({"options": {"beam_size": 1}}, "options"),
     ({"engine": "faster-whisper", "options": {"chunk_size": 10}}, "options"),
+    ({"engine": "whisperx", "options": {"condition_on_previous_text": False}}, "options"),
+    ({"engine": "faster-whisper", "options": {"condition_on_previous_text": 0}}, "options"),
+    ({"engine": "faster-whisper", "options": {"condition_on_previous_text": "false"}}, "options"),
+    ({"engine": "faster-whisper", "options": {"hallucination_silence_threshold": 0.1}}, "options"),
+    ({"engine": "faster-whisper", "options": {"hallucination_silence_threshold": 30}}, "options"),
+    ({"engine": "faster-whisper", "options": {"hallucination_silence_threshold": True}}, "options"),
+    ({"engine": "faster-whisper", "options": {"compression_ratio_threshold": 0.4}}, "options"),
+    ({"engine": "faster-whisper", "options": {"compression_ratio_threshold": 5.5}}, "options"),
+    ({"engine": "faster-whisper", "options": {"compression_ratio_threshold": float("inf")}}, "options"),
+    ({"engine": "faster-whisper", "options": {"compression_ratio_threshold": None}}, "options"),
 ])
 def test_bad_transcribe_input(env, extra, reason):
     out = handler.handler(_job(**{"engine": "whisperx", **extra}))

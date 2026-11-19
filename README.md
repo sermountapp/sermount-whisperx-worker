@@ -59,20 +59,29 @@ Input:
 
 - `language` is required, `en` or `es`, and pinned (never detected).
 - `engine` is required: `whisperx` or `faster-whisper`.
-- `options` is optional and `whisperx` only. Each key overrides one default below, within
-  bounds: `chunk_size` integer 5..30, `batch_size` integer 1..32, `vad_onset` and
-  `vad_offset` 0.05..0.95. Anything else is `reason: "options"`.
+- `options` is optional. Each key overrides one default below, within bounds; a key the
+  engine does not take, or a value out of bounds, is `reason: "options"`. The effective
+  values come back in `settings`.
+
+| Engine | Option | Default | Bounds |
+|---|---|---|---|
+| `whisperx` | `chunk_size` | 30 | integer 5..30 (30 is Whisper's window: the ceiling) |
+| `whisperx` | `batch_size` | 16 | integer 1..32 |
+| `whisperx` | `vad_onset` / `vad_offset` | 0.500 / 0.363 | 0.05..0.95 |
+| `faster-whisper` | `condition_on_previous_text` | `true` | `true` / `false` (v0.2.1) |
+| `faster-whisper` | `hallucination_silence_threshold` | `null` (off) | seconds 0.5..10.0, or `null` (v0.2.1) |
+| `faster-whisper` | `compression_ratio_threshold` | 2.4 | 0.5..5.0 (v0.2.1) |
 
 Output (the handler never raises; failures come back as `transcribed: false`):
 
 ```json
 {"transcribed": true, "reason": null, "engine": "whisperx",
- "engine_id": "whisperx/large-v3@v0.2.0", "model": "large-v3", "language": "en",
+ "engine_id": "whisperx/large-v3@v0.2.1", "model": "large-v3", "language": "en",
  "segments": [{"start": 0.0, "end": 4.1, "text": "And so, my fellow Americans,"}],
  "words": [{"w": "And", "start": 0.21, "end": 0.38, "score": 0.91}],
  "settings": {"path": "batched", "chunk_size": 30, "...": "every effective setting"},
  "versions": {"whisperx": "3.8.6", "faster-whisper": "1.2.1", "ctranslate2": "4.8.2", "torch": "2.8.0"},
- "image_tag": "v0.2.0", "exec_ms": 2140, "download_ms": 120, "transcribe_ms": 1500,
+ "image_tag": "v0.2.1", "exec_ms": 2140, "download_ms": 120, "transcribe_ms": 1500,
  "align_ms": 400, "segment_count": 1, "word_count": 22, "scored_count": 22,
  "words_synthesised": 0, "vad_chunks": 1, "audio_secs": 11.0}
 ```
@@ -125,7 +134,21 @@ of looped chunks (its "E2" fix) is NOT ported: this is the plain batched path.
    wav2vec2 pass.
 
 Every decoding option there is faster-whisper's default except `vad_filter`, which is off by
-default and on here. These settings are fixed; `options` is refused for this engine.
+default and on here. Beam, word timestamps and VAD are fixed. Since v0.2.1 a job may set three
+knobs against the sequential decoder's loops (table above). Their defaults are the library's,
+so a job without `options` decodes exactly as v0.2.0 did:
+
+- `condition_on_previous_text: false` stops feeding each window the previous window's text.
+  That feedback is how one looped phrase keeps repeating: on sermon 44 (2026-11-19) this path
+  wrote "I want a car." five times at 662 s and "It's gone off on me." four times at 899 s,
+  where whisper-1 and whisperx have neither.
+- `hallucination_silence_threshold` (seconds) skips a silence longer than this when the
+  segment around it looks hallucinated. It needs word timestamps, which this path always has.
+- `compression_ratio_threshold` lower makes the temperature fallback re-decode a repetitive
+  window sooner.
+
+If loops survive `condition_on_previous_text: false`, the next variant is WHC's "E2" re-decode
+(not ported).
 
 Part B makes both paths runnable. It decides nothing: the bake-off's Part C measures missing
 words for each against hand-checked reference transcripts.
@@ -284,6 +307,11 @@ is closed**):
 | transcribe `faster-whisper`, en | 22 words, text exact, transcribe_ms 641, exec_ms 7678 (first load), delayTime 13557 (cold start) |
 | transcribe `whisperx`, en, defaults | 22 words, text exact, 1 VAD chunk, 2 segments, transcribe_ms 745, align_ms 169, exec_ms 8059 |
 | transcribe `whisperx`, en, `chunk_size: 5` | 22 words, text exact, 3 VAD chunks, cut at "ask not \| what your country", no word dropped, align_ms 243 |
+
+v0.2.1 ran for real on the same CPU setup, `samples/jfk.wav`, `faster-whisper` with
+`condition_on_previous_text: false`, `hallucination_silence_threshold: 2.0`,
+`compression_ratio_threshold: 1.8`, and again with no options: both 22 words, text exact,
+`settings` echoing each value. faster-whisper 1.2.1 accepted all three arguments.
 
 The stray full stop the CPU run put at that `chunk_size: 5` cut ("ask not. what") did not
 appear on the GPU (float16, not int8). Punctuation at a chunk edge is not stable across
