@@ -174,6 +174,12 @@ tracks `main` (see "Shipping a new version"), so decide which branch each endpoi
 before v0.2.0 reaches `main`. The image grows by about 3.4 GB (large-v3 plus the Spanish
 aligner), which every cold start and every build pays.
 
+The trial endpoint exists: `sermount-whisperx-trial`, cloned from the live endpoint and built
+from branch `feat/transcribe-mode` @ `761ae25`. The live endpoint still tracks `main`.
+The RunPod GitHub build ran 2026-11-19 20:04-20:16 UTC: 12 minutes, inside the 30-minute cap
+(**that open question is closed**), a 13.3 GB image, model bake 21 s. Baked:
+`faster-whisper-large-v3`, `nltk_data`, and both wav2vec2 bundles.
+
 After the endpoint exists, create an API key scoped to this endpoint. It goes into the
 Render **worker** service as `RUNPOD_API_KEY` (`sync: false`) together with
 `RUNPOD_ALIGN_ENDPOINT_ID`. Never into the web service, a file, or a chat.
@@ -267,6 +273,27 @@ CPU under amd64 emulation on a Mac, int8, so the times only show that it runs, n
 
 The Spanish clip was made with macOS text-to-speech and is not committed. It only shows that
 the Spanish models load and run; it says nothing about accuracy.
+
+**First GPU run** (2026-11-19, trial endpoint, RTX 4090, `compute_type` float16,
+`samples/jfk.wav`, 11 s). Versions reported: ctranslate2 4.8.2, faster-whisper 1.2.1,
+torch 2.8.0, whisperx 3.8.6. CTranslate2 found cuDNN on the GPU (**the cuDNN open question
+is closed**):
+
+| Job | Result |
+|---|---|
+| transcribe `faster-whisper`, en | 22 words, text exact, transcribe_ms 641, exec_ms 7678 (first load), delayTime 13557 (cold start) |
+| transcribe `whisperx`, en, defaults | 22 words, text exact, 1 VAD chunk, 2 segments, transcribe_ms 745, align_ms 169, exec_ms 8059 |
+| transcribe `whisperx`, en, `chunk_size: 5` | 22 words, text exact, 3 VAD chunks, cut at "ask not \| what your country", no word dropped, align_ms 243 |
+
+The stray full stop the CPU run put at that `chunk_size: 5` cut ("ask not. what") did not
+appear on the GPU (float16, not int8). Punctuation at a chunk edge is not stable across
+runs or compute types, so it is not evidence either way.
+
+**Timings rule (user decision, bake-off brief).** Word times from the sequential path
+(Whisper's own cross-attention) are not good enough for cuts. On jfk.wav it timed "ask" at
+2.26-3.52 s (1.26 s, swallowing the pause before it), where the wav2vec2 aligner gave
+3.548-3.788 s (0.24 s); and "And" at 0.0 where the aligner gave 0.421. So whichever engine
+wins on text, Edit Mode's word timings keep coming from the aligner (align mode).
 
 ## Fallback: RunPod's builder rejects the image
 
