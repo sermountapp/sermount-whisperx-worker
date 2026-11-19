@@ -38,10 +38,12 @@ jobs:
         #
         # transformers 4.57.6 is transitive (whisperx); its fixes are in 5.x, a major
         # that is its own lane. Every ignored advisory's vector is loading an untrusted
-        # model, checkpoint, config or remote code. This worker aligns with the fixed
-        # torchaudio WAV2VEC2_ASR_BASE_960H bundle baked at build (ALIGN_MODEL,
-        # language_code="en"), runs with HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1,
-        # never loads a model or config named by a job, never trains, never saves:
+        # model, checkpoint, config or remote code. This worker loads only models baked
+        # at build: the torchaudio WAV2VEC2_ASR_BASE_960H / VOXPOPULI_ASR_BASE_10K_ES
+        # bundles (ALIGN_MODELS) and, for transcribe mode, faster-whisper large-v3 from a
+        # pinned revision checked by sha256 (CTranslate2, not transformers). A job picks
+        # a language or engine from fixed lists, never a model, path or config. It runs
+        # with HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1, never trains, never saves:
         #   PYSEC-2025-217  (CVE-2025-14929) X-CLIP checkpoint conversion deserialises an untrusted checkpoint
         #   PYSEC-2026-2288 (CVE-2026-1839)  Trainer._load_rng_state torch.load of a checkpoint; training only, torch < 2.6
         #   PYSEC-2026-2289 (CVE-2026-4372)  a malicious config.json in a Hub repo runs code at from_pretrained()

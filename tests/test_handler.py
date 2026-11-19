@@ -61,7 +61,13 @@ def env(monkeypatch, tmp_path):
     """Fake whisperx, a fake model, a fake download; record the temp dirs."""
     fake = FakeWhisperX()
     monkeypatch.setitem(sys.modules, "whisperx", fake)
-    monkeypatch.setattr(handler, "_get_model", lambda: ("model", {"language": "en"}, "cpu"))
+    loaded = []
+
+    def fake_get_model(language="en"):
+        loaded.append(language)
+        return ("model", {"language": language}, "cpu")
+
+    monkeypatch.setattr(handler, "_get_model", fake_get_model)
 
     def fake_download(url, dest):
         with open(dest, "wb") as fh:
@@ -78,7 +84,7 @@ def env(monkeypatch, tmp_path):
         return d
 
     monkeypatch.setattr(handler.tempfile, "mkdtemp", mkdtemp)
-    return types.SimpleNamespace(fake=fake, made=made)
+    return types.SimpleNamespace(fake=fake, made=made, loaded=loaded)
 
 
 def _job(words, **extra):
@@ -143,8 +149,33 @@ def test_bad_input_is_not_aligned(env, job_input):
 
 
 def test_unsupported_language(env):
-    out = handler.handler(_job(_words(3), language="es"))
+    out = handler.handler(_job(_words(3), language="fr"))
     assert out["aligned"] is False and out["reason"] == "language"
+    assert env.loaded == []
+
+
+def test_spanish_aligns_with_the_spanish_model(env):
+    out = handler.handler(_job(_words(5), language="ES"))
+    assert out["aligned"] is True and out["model"] == "VOXPOPULI_ASR_BASE_10K_ES"
+    assert env.loaded == ["es"]
+
+
+def test_language_defaults_to_english(env):
+    job = _job(_words(5))
+    del job["input"]["language"]
+    out = handler.handler(job)
+    assert out["aligned"] is True and out["model"] == handler.ALIGN_MODEL == "WAV2VEC2_ASR_BASE_960H"
+    assert env.loaded == ["en"]
+
+
+def test_input_without_mode_is_alignment_and_never_loads_whisper(env, monkeypatch):
+    def boom():
+        raise AssertionError("alignment must not load the transcription model")
+
+    monkeypatch.setattr(handler, "_get_whisper", boom)
+    for extra in ({}, {"mode": "align"}):
+        out = handler.handler(_job(_words(5), **extra))
+        assert out["aligned"] is True and "transcribed" not in out
 
 
 def test_download_failure(env, monkeypatch):
